@@ -1,152 +1,271 @@
 # Tessellating PBR Texture Generator Architecture
 
 ## Overview
-A modular system for generating seamlessly tessellating PBR (Physically Based Rendering) textures using generative AI APIs. The system processes texture descriptions from JSON files and produces complete PBR texture sets.
+An AI-powered Python system for generating seamlessly tessellating PBR (Physically Based Rendering) textures. The workflow begins with a text prompt that is sent to an AI image generator (e.g., DALL-E) to create a diffuse map. This map is then used as the base for algorithmically deriving a full set of PBR textures.
 
-## System Architecture
+## System Architecture (Python Implementation)
 
 ### Core Modules
 
-#### 1. JSON Loader Module (`src/modules/json-loader/`)
-- **Purpose**: Load and validate texture description JSON files
+#### 1. Core Generator (`src/core/generator.py`)
+- **Purpose**: Main orchestrator for the AI-to-PBR generation pipeline.
 - **Responsibilities**:
-  - Parse JSON files from specified directory
-  - Validate JSON schema
-  - Extract texture metadata and descriptions
-  - Handle batch loading of multiple files
-- **Interfaces**:
-  - `loadTextureDescriptions(directory: string): Promise<TextureDescription[]>`
-  - `validateSchema(data: any): ValidationResult`
+  - Load and validate configuration.
+  - Call the AI API to generate the initial diffuse map from a text prompt.
+  - Coordinate the algorithmic generation of other PBR maps.
+  - Manage the entire generation workflow.
+- **Key Methods**:
+  - `generate_textures_with_progress(config: Config) -> List[Result]`
+  - `generate_diffuse_map(config: Config) -> Image`
 
-#### 2. API Client Module (`src/modules/api-client/`)
-- **Purpose**: Manage interactions with generative AI APIs
+#### 2. AI Interface (`src/interfaces/openai_api.py`)
+- **Purpose**: Handles communication with the OpenAI API.
 - **Responsibilities**:
-  - Abstract API communication (Replicate, OpenAI, etc.)
-  - Handle authentication and rate limiting
-  - Manage request retries and error recovery
-  - Support multiple API providers
-- **Interfaces**:
-  - `generateTexture(prompt: string, options: GenerationOptions): Promise<TextureResult>`
-  - `checkApiStatus(): Promise<ApiStatus>`
+  - Build the prompt for the AI model.
+  - Send requests to the DALL-E API.
+  - Handle API responses and errors.
+  - Decode the returned image data.
 
-#### 3. Texture Generator Module (`src/modules/texture-generator/`)
-- **Purpose**: Core texture generation logic
+#### 3. Base Texture Processor (`src/modules/base.py`)
+- **Purpose**: Abstract base class for all algorithmic texture processors.
 - **Responsibilities**:
-  - Orchestrate the generation process
-  - Apply tessellation algorithms
-  - Handle multiple texture types (diffuse, normal, roughness, etc.)
-  - Ensure seamless tiling
-- **Interfaces**:
-  - `generatePBRSet(description: TextureDescription): Promise<PBRTextureSet>`
-  - `ensureTessellation(texture: Texture): Promise<Texture>`
+  - Define a common interface for PBR map generation.
+  - Handle image loading, processing, and saving.
 
-#### 4. PBR Exporter Module (`src/modules/pbr-exporter/`)
-- **Purpose**: Export generated textures in standard formats
+#### 4. Diffuse Module (`src/modules/diffuse.py`)
+- **Purpose**: Handles the AI-generated diffuse texture.
 - **Responsibilities**:
-  - Save textures in appropriate formats (PNG, EXR, JPEG)
-  - Generate material definition files (MTL, USD, glTF)
-  - Create texture atlases if needed
-  - Organize output directory structure
-- **Interfaces**:
-  - `exportPBRSet(textureSet: PBRTextureSet, outputDir: string): Promise<ExportResult>`
-  - `generateMaterialFile(textureSet: PBRTextureSet): Promise<MaterialDefinition>`
+  - Receives the image data from the AI interface.
+  - Applies initial color corrections or filters if needed.
+  - Serves as the input for the tessellation engine and other PBR modules.
 
-#### 5. Prompt Engine Module (`src/modules/prompt-engine/`)
-- **Purpose**: Optimize prompts for tessellating texture generation
+#### 4. Normal Map Generator (`src/modules/normal.py`)
+- **Purpose**: Generate normal maps from diffuse/height data
 - **Responsibilities**:
-  - Transform texture descriptions into optimized prompts
-  - Include tessellation-specific keywords
-  - Handle style and material specifications
-  - Support prompt templates and variations
-- **Interfaces**:
-  - `generatePrompt(description: TextureDescription): Promise<string>`
-  - `optimizeForTessellation(prompt: string): string`
+  - Convert grayscale height to normals
+  - Apply Sobel filters for edge detection
+  - Normalize and encode to RGB
+  - Support configurable strength
+- **Key Features**:
+  - Multi-scale detail extraction
+  - Configurable normal strength (0.1-5.0)
+  - Blue channel optimization
 
-#### 6. Error Handler Module (`src/modules/error-handler/`)
-- **Purpose**: Centralized error handling and recovery
+#### 5. Roughness Estimator (`src/modules/roughness.py`)
+- **Purpose**: Estimate surface roughness from diffuse
 - **Responsibilities**:
-  - Implement retry strategies with exponential backoff
-  - Log errors with context
-  - Provide fallback mechanisms
-  - Track error metrics
-- **Interfaces**:
-  - `withRetry<T>(operation: () => Promise<T>, options: RetryOptions): Promise<T>`
-  - `handleError(error: Error, context: ErrorContext): void`
+  - Analyze texture patterns
+  - Extract high-frequency details
+  - Apply contrast adjustments
+  - Generate grayscale roughness map
+- **Algorithm**:
+  - Luminance-based analysis
+  - Edge detection for detail
+  - Configurable contrast (0.5-2.0)
 
-### Data Flow
+#### 6. Metallic Map Creator (`src/modules/metallic.py`)
+- **Purpose**: Generate metallic maps
+- **Responsibilities**:
+  - Analyze color for metallic properties
+  - Apply threshold-based detection
+  - Support manual overrides
+  - Create binary or gradient maps
+- **Detection Methods**:
+  - Color saturation analysis
+  - Brightness thresholding
+  - Material-specific presets
 
+#### 7. Ambient Occlusion (`src/modules/ambient_occlusion.py`)
+- **Purpose**: Synthesize ambient occlusion maps
+- **Responsibilities**:
+  - Generate cavity/crevice darkening
+  - Multi-scale occlusion
+  - Edge-aware filtering
+  - Intensity control
+- **Techniques**:
+  - Height-based occlusion
+  - Screen-space approximation
+  - Gaussian blur passes
+
+#### 8. Height Map Generator (`src/modules/height.py`)
+- **Purpose**: Create displacement/height maps
+- **Responsibilities**:
+  - Convert diffuse to grayscale height
+  - Apply curve adjustments
+  - Generate displacement data
+  - Support 16/32-bit output
+- **Processing**:
+  - Luminance extraction
+  - Contrast enhancement
+  - Optional blur for smoothing
+
+#### 9. Tessellation Engine (`src/modules/tessellation.py`)
+- **Purpose**: Ensure seamless tiling for all textures
+- **Responsibilities**:
+  - Apply tiling algorithms
+  - Remove visible seams
+  - Generate preview tiles
+  - Support multiple methods
+- **Algorithms**:
+  - **Mirror**: Edge mirroring with blend
+  - **Offset**: 50% offset with cross-fade
+  - **Frequency**: Frequency domain blending
+
+### Data Flow (AI-Driven Implementation)
+
+```mermaid
+graph TD
+    A[Text Prompt] --> B{AI Generation};
+    B --> C[Diffuse Map];
+    C --> D[Tessellation Engine];
+    D --> E[Algorithmic PBR Map Generation];
+    E --> F[Normal Map];
+    E --> G[Roughness Map];
+    E --> H[Metallic Map];
+    E --> I[AO Map];
+    E --> J[Height Map];
+    F & G & H & I & J --> K[Save Outputs & Previews];
+
+    style B fill:#cce5ff,stroke:#b8daff
+    style D fill:#d4edda,stroke:#c3e6cb
 ```
-JSON Files → JSON Loader → Prompt Engine → API Client → Texture Generator → PBR Exporter → Output Files
-                ↓              ↓              ↓              ↓              ↓
-            Error Handler (monitors and handles errors at each step)
+
+**Detailed Pipeline:**
+
+1.  **Prompt Input**: The process starts with a user-provided text prompt describing the desired material.
+2.  **AI Generation**: The prompt is sent to the OpenAI API, which returns a diffuse texture image.
+3.  **Tessellation**: The AI-generated diffuse map is made seamlessly tileable using one of the available algorithms.
+4.  **Algorithmic Derivation**: The seamless diffuse map is used as a base to generate all other PBR maps (Normal, Roughness, etc.) in parallel.
+5.  **Export**: All generated textures and their tiled previews are saved to the output directory.
+
+### Key Classes and Interfaces (Python)
+
+#### Config Structure
+```python
+@dataclass
+class Config:
+    project: ProjectConfig
+    textures: TextureConfig
+    generation: GenerationConfig
+    output: OutputConfig
+    logging: LoggingConfig
 ```
 
-### Key Interfaces
+#### Texture Processing
+```python
+class BaseTextureProcessor(ABC):
+    @abstractmethod
+    def process(self, image: Image) -> Image:
+        """Process texture and return result"""
+        pass
 
-#### TextureDescription
-```typescript
-interface TextureDescription {
-  id: string;
-  name: string;
-  description: string;
-  style?: string;
-  material?: string;
-  resolution?: number;
-  pbrMaps?: string[];
-}
+    def apply_tessellation(self, image: Image) -> Image:
+        """Apply seamless tiling"""
+        return self.tessellator.make_seamless(image)
 ```
 
-#### PBRTextureSet
-```typescript
-interface PBRTextureSet {
-  id: string;
-  name: string;
-  diffuse: Texture;
-  normal?: Texture;
-  roughness?: Texture;
-  metallic?: Texture;
-  ao?: Texture;
-  displacement?: Texture;
-}
+#### Generation Options
+```python
+@dataclass
+class GenerationConfig:
+    tessellation: TessellationConfig
+    normal: NormalConfig
+    roughness: RoughnessConfig
+    metallic: MetallicConfig
+    ao: AOConfig
+    height: HeightConfig
 ```
 
-#### GenerationOptions
-```typescript
-interface GenerationOptions {
-  provider: 'replicate' | 'openai' | 'midjourney';
-  model?: string;
-  resolution: number;
-  tessellate: boolean;
-  seed?: number;
-}
+#### Tessellation Algorithms
+```python
+class TessellationProcessor:
+    def make_seamless(self,
+                     image: Image,
+                     algorithm: str = 'mirror',
+                     blend_width: int = 64) -> Image:
+        """Apply seamless tiling algorithm"""
+        # Returns seamlessly tiling texture
 ```
 
-### Error Handling Strategy
+### Processing Pipeline Details
 
-1. **Network Errors**: Automatic retry with exponential backoff
-2. **API Rate Limits**: Queue management and delay injection
-3. **Generation Failures**: Fallback to alternative models/providers
-4. **Invalid Input**: Validation errors with clear messages
-5. **File I/O Errors**: Graceful degradation and recovery
+#### 1. Tessellation Stage
+The tessellation engine is the heart of seamless texture generation:
 
-### Configuration
+```python
+# Mirror Algorithm
+- Blend edges with mirrored version
+- Configurable blend width (8-256 pixels)
+- Best for organic/natural textures
 
-All modules read from a central configuration file:
-- `config/default.json`: Default settings
-- `config/production.json`: Production overrides
-- Environment variables for sensitive data (API keys)
+# Offset Algorithm
+- Shift by 50% and blend overlaps
+- Cross-fade at boundaries
+- Good for geometric patterns
 
-### Testing Strategy
+# Frequency Algorithm
+- FFT-based edge blending
+- Preserves high-frequency details
+- Best for complex textures
+```
 
-- Unit tests for each module
-- Integration tests for module interactions
-- End-to-end tests for complete workflows
-- Mock API responses for reliable testing
+#### 2. Normal Map Generation
+```python
+# Multi-scale approach:
+1. Generate base normals from height
+2. Extract fine details from diffuse
+3. Combine at multiple scales
+4. Normalize and encode to RGB
+```
 
-### Deployment Considerations
+#### 3. PBR Map Derivation
+```python
+# Parallel processing:
+- Normal: Sobel filter + height analysis
+- Roughness: Frequency analysis + contrast
+- Metallic: Color analysis + thresholds
+- AO: Multi-blur cavity detection
+- Height: Luminance + curve adjustment
+```
 
-- Containerized with Docker
-- Environment-specific configurations
-- Logging to centralized system
-- Monitoring and alerting setup
-- Horizontal scaling capability
+### Configuration System
+
+Hierarchical configuration with CLI overrides:
+
+```python
+# Priority order (highest to lowest):
+1. CLI arguments (--resolution, --output, etc.)
+2. Custom config file (--config path/to/config.json)
+3. Default config (config/default.json)
+4. Hard-coded defaults
+```
+
+Key configuration sections:
+- `textures`: Resolution, formats, types
+- `generation`: Algorithm parameters
+- `output`: Paths, naming, previews
+- `logging`: Verbosity, debug mode
+
+### Performance Optimizations
+
+1. **Parallel Processing**: All PBR maps generated concurrently
+2. **Memory Efficiency**: Streaming for large textures
+3. **Caching**: Reuse tessellation results
+4. **SIMD Operations**: NumPy vectorization
+5. **Lazy Loading**: Load only required modules
+
+### Error Handling
+
+1. **Input Validation**: Check file formats, dimensions
+2. **Memory Guards**: Prevent OOM for large textures
+3. **Graceful Degradation**: Skip failed maps, continue others
+4. **Detailed Logging**: Track all operations
+5. **User Feedback**: Clear error messages
+
+### Future Enhancements
+
+- GPU acceleration for large textures
+- Machine learning-based map generation
+- Real-time preview server
+- Material preset library
+- Batch processing UI

@@ -1,3 +1,7 @@
 .swarm
 .venv
 .env
+test_offline_output
+test_preview_direct
+test_output
+outputs

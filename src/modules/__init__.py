@@ -7,6 +7,7 @@ from .metallic import MetallicModule
 from .ambient_occlusion import AmbientOcclusionModule
 from .height import HeightModule
 from .emissive import EmissiveModule
+from .tessellation import TessellationModule
 
 __all__ = [
     'DiffuseModule',
@@ -15,5 +16,6 @@ __all__ = [
     'MetallicModule',
     'AmbientOcclusionModule',
     'HeightModule',
-    'EmissiveModule'
+    'EmissiveModule',
+    'TessellationModule'
 ]

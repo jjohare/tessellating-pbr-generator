@@ -4,10 +4,12 @@
 import argparse
 import asyncio
 import sys
+import time
 from pathlib import Path
 from src.config import load_config
 from src.types.config import Config
-from src.utils.logging import setup_logger, get_logger
+from src.utils.logging import setup_logger, get_logger, print_summary
+from src.utils.progress import ProgressTracker
 
 
 def parse_arguments():
@@ -58,6 +60,24 @@ def parse_arguments():
         help="Enable debug logging"
     )
     
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output with detailed progress"
+    )
+    
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable colored output"
+    )
+    
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Minimize output to only essential information"
+    )
+    
     return parser.parse_args()
 
 
@@ -67,10 +87,15 @@ async def main():
     args = parse_arguments()
     
     # Setup logging
-    setup_logger(debug=args.debug)
+    setup_logger(debug=args.debug, verbose=args.verbose, no_color=args.no_color)
     logger = get_logger(__name__)
     
-    logger.info("Starting Tessellating PBR Texture Generator")
+    # Track overall generation time
+    generation_start_time = time.time()
+    warnings = []
+    
+    if not args.quiet:
+        logger.info("🎨 Starting Tessellating PBR Texture Generator")
     
     try:
         # Load configuration
@@ -98,25 +123,39 @@ async def main():
         config = Config.from_dict(config_dict)
         
         # Log configuration
-        logger.info(f"Material: {config.material}")
-        logger.info(f"Style: {config.style}")
-        logger.info(f"Resolution: {config.texture_config.resolution}")
-        logger.info(f"Texture types: {[t.value for t in config.texture_config.types]}")
-        logger.info(f"Output directory: {config.output_directory}")
+        if not args.quiet:
+            logger.info(f"📦 Material: {config.material}")
+            logger.info(f"🎭 Style: {config.style}")
+            logger.info(f"📐 Resolution: {config.texture_config.resolution.width}x{config.texture_config.resolution.height}")
+            logger.info(f"🗂️  Texture types: {[t.value for t in config.texture_config.types]}")
+            logger.info(f"📁 Output directory: {config.output_directory}")
+            
+        # Initialize progress tracker
+        progress_tracker = ProgressTracker(
+            total_textures=len(config.texture_config.types),
+            material_name=config.material
+        )
+        
+        # Generate textures with progress tracking
+        if not args.quiet:
+            logger.info("🚀 Starting texture generation...")
         
         # Import generator here to avoid circular imports
-        from src.core.generator import generate_textures
+        from src.core.generator import generate_textures_with_progress
         
         # Generate textures
-        logger.info("Starting texture generation...")
-        results = await generate_textures(config)
+        results = await generate_textures_with_progress(config, progress_tracker if not args.quiet else None)
         
-        # Log results
-        logger.info(f"Successfully generated {len(results)} textures")
-        for result in results:
-            logger.info(f"  - {result.texture_type.value}: {result.file_path}")
+        # Close progress tracker and get summary data
+        summary_data = progress_tracker.close() if not args.quiet else {'total_time': time.time() - generation_start_time, 'warnings': warnings}
         
-        logger.info("Texture generation complete!")
+        # Print summary report
+        if not args.quiet:
+            print_summary(results, summary_data['total_time'], summary_data['warnings'])
+        else:
+            # Minimal output for quiet mode
+            successful = sum(1 for r in results if r.success)
+            logger.info(f"Generated {successful}/{len(results)} textures in {summary_data['total_time']:.1f}s")
         
     except FileNotFoundError as e:
         logger.error(f"Configuration file not found: {e}")
